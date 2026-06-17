@@ -1,6 +1,14 @@
 # slsa-framework/slsa-github-generator
 
-Hardened GitHub Action by [Chainguard](https://www.chainguard.dev).
+Language-agnostic SLSA provenance generation for Github Actions
+
+Hardened by [Chainguard](https://www.chainguard.dev) from the upstream action at [https://github.com/slsa-framework/slsa-github-generator](https://github.com/slsa-framework/slsa-github-generator).
+
+## Versions
+
+| Version | Tag | Upstream commit |
+|---------|-----|-----------------|
+| actions/delegator/secure-download-folder/v2.1.0 | [`actions/delegator/secure-download-folder/v2.1.0`](https://github.com/chainguard-actions/slsa-framework-slsa-github-generator/tree/actions/delegator/secure-download-folder/v2.1.0) | — |
 
 ## Privacy
 
