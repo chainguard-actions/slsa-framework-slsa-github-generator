@@ -1,0 +1,90 @@
+name: Test unscoped package build without run-scripts
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Ensure xxd is available (needed by the rng sub-action)
+        run: |
+          if ! command -v xxd >/dev/null 2>&1; then
+            (apt-get install -y xxd >/dev/null 2>&1 || sudo apt-get install -y xxd >/dev/null 2>&1) || true
+          fi
+          if ! command -v xxd >/dev/null 2>&1; then
+            mkdir -p "$RUNNER_TEMP/xxd-bin"
+            cat > "$RUNNER_TEMP/xxd-bin/xxd" <<'EOF'
+          #!/bin/sh
+          # Minimal xxd -p replacement: plain hex dump of stdin
+          od -An -tx1 -v | tr -d ' \n'
+          echo
+          EOF
+            chmod +x "$RUNNER_TEMP/xxd-bin/xxd"
+            echo "$RUNNER_TEMP/xxd-bin" >> "$GITHUB_PATH"
+            echo "installed xxd shim"
+          fi
+
+      - name: Expose builder scripts at ../__TOOL_ACTION_DIR__
+        run: |
+          src="$GITHUB_WORKSPACE"
+          if [ ! -f "$src/build.sh" ]; then
+            found="$(find "$GITHUB_WORKSPACE" -path '*builders/nodejs/build.sh' -print -quit)"
+            src="$(dirname "$found")"
+          fi
+          echo "scripts dir: $src"
+          ln -sfn "$src" "$(dirname "$GITHUB_WORKSPACE")/__TOOL_ACTION_DIR__"
+
+      - id: action
+        uses: .
+        with:
+          slsa-workflow-inputs: '{"node-version":"20","directory":"tests/fixtures/unscoped-pkg"}'
+          slsa-layout-file: ${{ github.workspace }}/slsa-layout-unscoped.json
+
+      - name: Assert package-filename
+        env:
+          ACTUAL: ${{ steps.action.outputs.package-filename }}
+        run: |
+          echo "actual: $ACTUAL"
+          if [ "$ACTUAL" != "plain-test-pkg-0.4.0.tgz" ]; then
+            echo "FAIL: expected 'plain-test-pkg-0.4.0.tgz'"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert attestation-name
+        env:
+          ACTUAL: ${{ steps.action.outputs.attestation-name }}
+        run: |
+          echo "actual: $ACTUAL"
+          if [ "$ACTUAL" != "plain-test-pkg-0.4.0.build.slsa" ]; then
+            echo "FAIL: expected 'plain-test-pkg-0.4.0.build.slsa'"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert package-sha256
+        env:
+          ACTUAL: ${{ steps.action.outputs.package-sha256 }}
+        run: |
+          expected="$(sha256sum tests/fixtures/unscoped-pkg/plain-test-pkg-0.4.0.tgz | awk '{print $1}')"
+          echo "actual: $ACTUAL"
+          echo "expected: $expected"
+          if [ "$ACTUAL" != "$expected" ]; then
+            echo "FAIL: sha256 mismatch"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert layout file subject has no namespace
+        run: |
+          f="$GITHUB_WORKSPACE/slsa-layout-unscoped.json"
+          cat "$f"
+          subj="$(jq -r '.attestations[0].subjects[0].name' "$f")"
+          [ "$subj" = "pkg:npm/plain-test-pkg@0.4.0" ] || { echo "FAIL: subject '$subj'"; exit 1; }
+          name="$(jq -r '.attestations[0].name' "$f")"
+          [ "$name" = "plain-test-pkg-0.4.0" ] || { echo "FAIL: attestation name '$name'"; exit 1; }
+          digest="$(jq -r '.attestations[0].subjects[0].digest.sha512' "$f")"
+          expected="$(sha512sum tests/fixtures/unscoped-pkg/plain-test-pkg-0.4.0.tgz | awk '{print $1}')"
+          [ "$digest" = "$expected" ] || { echo "FAIL: digest '$digest' != '$expected'"; exit 1; }
+          echo "PASS"

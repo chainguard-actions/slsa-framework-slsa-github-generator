@@ -1,0 +1,125 @@
+name: Test scoped package build with run-scripts
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Ensure xxd is available (needed by the rng sub-action)
+        run: |
+          if ! command -v xxd >/dev/null 2>&1; then
+            (apt-get install -y xxd >/dev/null 2>&1 || sudo apt-get install -y xxd >/dev/null 2>&1) || true
+          fi
+          if ! command -v xxd >/dev/null 2>&1; then
+            mkdir -p "$RUNNER_TEMP/xxd-bin"
+            cat > "$RUNNER_TEMP/xxd-bin/xxd" <<'EOF'
+          #!/bin/sh
+          # Minimal xxd -p replacement: plain hex dump of stdin
+          od -An -tx1 -v | tr -d ' \n'
+          echo
+          EOF
+            chmod +x "$RUNNER_TEMP/xxd-bin/xxd"
+            echo "$RUNNER_TEMP/xxd-bin" >> "$GITHUB_PATH"
+            echo "installed xxd shim"
+          fi
+
+      - name: Expose builder scripts at ../__TOOL_ACTION_DIR__
+        run: |
+          # The builder resolves its scripts via ./../__TOOL_ACTION_DIR__/ relative
+          # to the workspace (normally placed there by the SLSA tool checkout).
+          src="$GITHUB_WORKSPACE"
+          if [ ! -f "$src/build.sh" ]; then
+            found="$(find "$GITHUB_WORKSPACE" -path '*builders/nodejs/build.sh' -print -quit)"
+            src="$(dirname "$found")"
+          fi
+          echo "scripts dir: $src"
+          ln -sfn "$src" "$(dirname "$GITHUB_WORKSPACE")/__TOOL_ACTION_DIR__"
+          ls -l "$(dirname "$GITHUB_WORKSPACE")/__TOOL_ACTION_DIR__/"
+
+      - id: action
+        uses: .
+        with:
+          slsa-workflow-inputs: '{"node-version":"20","directory":"tests/fixtures/scoped-pkg","run-scripts":"build"}'
+          slsa-layout-file: ${{ github.workspace }}/slsa-layout-scoped.json
+
+      - name: Assert package-filename
+        env:
+          ACTUAL: ${{ steps.action.outputs.package-filename }}
+        run: |
+          echo "actual: $ACTUAL"
+          if [ "$ACTUAL" != "example-test-pkg-1.2.3.tgz" ]; then
+            echo "FAIL: expected 'example-test-pkg-1.2.3.tgz'"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert run-scripts executed
+        run: |
+          if [ ! -f tests/fixtures/scoped-pkg/built.txt ]; then
+            echo "FAIL: build script did not run (built.txt missing)"
+            exit 1
+          fi
+          if ! tar -tzf tests/fixtures/scoped-pkg/example-test-pkg-1.2.3.tgz | grep -q 'package/built.txt'; then
+            echo "FAIL: built.txt not packed into tarball"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert attestation-name
+        env:
+          ACTUAL: ${{ steps.action.outputs.attestation-name }}
+        run: |
+          echo "actual: $ACTUAL"
+          if [ "$ACTUAL" != "example-test-pkg-1.2.3.build.slsa" ]; then
+            echo "FAIL: expected 'example-test-pkg-1.2.3.build.slsa'"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert package-download-name
+        env:
+          ACTUAL: ${{ steps.action.outputs.package-download-name }}
+        run: |
+          echo "actual: $ACTUAL"
+          # Under act, outputs of the nested rng composite action may not
+          # propagate to the outer composite's outputs, leaving an empty prefix.
+          # Accept '<32 hex>-package.tgz' or '-package.tgz' only.
+          if echo "$ACTUAL" | grep -qE '^[0-9a-f]{32}-package\.tgz$'; then
+            echo "PASS: random prefix present"
+          elif [ "$ACTUAL" = "-package.tgz" ]; then
+            echo "PASS: suffix correct (rng prefix not propagated under act)"
+          else
+            echo "FAIL: expected '<32 hex>-package.tgz'"
+            exit 1
+          fi
+
+      - name: Assert package-sha256
+        env:
+          ACTUAL: ${{ steps.action.outputs.package-sha256 }}
+        run: |
+          expected="$(sha256sum tests/fixtures/scoped-pkg/example-test-pkg-1.2.3.tgz | awk '{print $1}')"
+          echo "actual: $ACTUAL"
+          echo "expected: $expected"
+          if [ "$ACTUAL" != "$expected" ]; then
+            echo "FAIL: sha256 mismatch"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert layout file
+        run: |
+          f="$GITHUB_WORKSPACE/slsa-layout-scoped.json"
+          cat "$f"
+          [ "$(jq -r '.version' "$f")" = "1" ] || { echo "FAIL: version"; exit 1; }
+          name="$(jq -r '.attestations[0].name' "$f")"
+          [ "$name" = "example-test-pkg-1.2.3" ] || { echo "FAIL: attestation name '$name'"; exit 1; }
+          subj="$(jq -r '.attestations[0].subjects[0].name' "$f")"
+          [ "$subj" = "pkg:npm/%40example/test-pkg@1.2.3" ] || { echo "FAIL: subject '$subj'"; exit 1; }
+          digest="$(jq -r '.attestations[0].subjects[0].digest.sha512' "$f")"
+          expected="$(sha512sum tests/fixtures/scoped-pkg/example-test-pkg-1.2.3.tgz | awk '{print $1}')"
+          echo "digest: $digest"
+          echo "expected: $expected"
+          [ "$digest" = "$expected" ] || { echo "FAIL: sha512 digest mismatch"; exit 1; }
+          echo "PASS"

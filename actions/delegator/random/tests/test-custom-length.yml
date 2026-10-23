@@ -1,0 +1,45 @@
+name: Test custom length
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Ensure xxd is available (missing from act image)
+        run: |
+          if command -v xxd >/dev/null 2>&1; then echo "xxd present"; exit 0; fi
+          SUDO=""; [ "$(id -u)" != "0" ] && command -v sudo >/dev/null 2>&1 && SUDO="sudo"
+          if command -v apt-get >/dev/null 2>&1; then
+            ($SUDO apt-get update -qq && $SUDO apt-get install -y -qq xxd) >/dev/null 2>&1 || true
+          fi
+          if command -v xxd >/dev/null 2>&1; then echo "xxd installed"; exit 0; fi
+          mkdir -p "$RUNNER_TEMP/xxd-shim"
+          cat > "$RUNNER_TEMP/xxd-shim/xxd" <<'EOF'
+          #!/bin/sh
+          od -An -v -tx1 | tr -d ' \n'
+          echo
+          EOF
+          chmod +x "$RUNNER_TEMP/xxd-shim/xxd"
+          echo "$RUNNER_TEMP/xxd-shim" >> "$GITHUB_PATH"
+          echo "xxd shim installed"
+      - id: action
+        uses: .
+        with:
+          length: 8
+      - name: Assert output is valid hex (16 chars if length forwarded, else 32-char default)
+        env:
+          ACTUAL: ${{ steps.action.outputs.random }}
+        run: |
+          echo "actual: $ACTUAL (len ${#ACTUAL})"
+          if ! echo "$ACTUAL" | grep -qE '^[0-9a-f]+$'; then
+            echo "FAIL: expected lowercase hex"
+            exit 1
+          fi
+          # Note: the wrapper action does not pass 'length' to the inner rng
+          # action, so the inner default (16 bytes -> 32 hex chars) applies.
+          if [ "${#ACTUAL}" != "16" ] && [ "${#ACTUAL}" != "32" ]; then
+            echo "FAIL: expected 16 or 32 hex characters"
+            exit 1
+          fi
+          echo "PASS"

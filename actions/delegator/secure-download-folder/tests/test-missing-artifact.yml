@@ -1,0 +1,30 @@
+name: Test missing artifact fails
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          name: this-artifact-does-not-exist-${{ github.run_id }}
+          path: download-target
+          sha256: 0000000000000000000000000000000000000000000000000000000000000000
+      - name: Assert action failed and wrote nothing
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "FAIL: expected failure for a nonexistent artifact, got '$OUTCOME'"
+            exit 1
+          fi
+          if [ -d "$GITHUB_WORKSPACE/download-target" ] && [ -n "$(ls -A "$GITHUB_WORKSPACE/download-target" 2>/dev/null)" ]; then
+            echo "FAIL: download-target should not contain files"
+            ls -la "$GITHUB_WORKSPACE/download-target"
+            exit 1
+          fi
+          echo "PASS"

@@ -1,0 +1,29 @@
+name: Test invalid sha256 fails
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          name: target
+          path: download-dir
+          sha256: not-a-valid-sha
+      - name: Assert action failed
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "FAIL: expected failure for invalid sha256"
+            exit 1
+          fi
+          if [ -d "$GITHUB_WORKSPACE/download-dir/target" ]; then
+            echo "FAIL: target directory should not exist"
+            exit 1
+          fi
+          echo "PASS"

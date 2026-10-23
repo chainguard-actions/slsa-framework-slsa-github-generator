@@ -1,0 +1,47 @@
+name: Test two invocations produce different values
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Ensure xxd is available (missing from act image)
+        run: |
+          if command -v xxd >/dev/null 2>&1; then echo "xxd present"; exit 0; fi
+          SUDO=""; [ "$(id -u)" != "0" ] && command -v sudo >/dev/null 2>&1 && SUDO="sudo"
+          if command -v apt-get >/dev/null 2>&1; then
+            ($SUDO apt-get update -qq && $SUDO apt-get install -y -qq xxd) >/dev/null 2>&1 || true
+          fi
+          if command -v xxd >/dev/null 2>&1; then echo "xxd installed"; exit 0; fi
+          mkdir -p "$RUNNER_TEMP/xxd-shim"
+          cat > "$RUNNER_TEMP/xxd-shim/xxd" <<'EOF'
+          #!/bin/sh
+          od -An -v -tx1 | tr -d ' \n'
+          echo
+          EOF
+          chmod +x "$RUNNER_TEMP/xxd-shim/xxd"
+          echo "$RUNNER_TEMP/xxd-shim" >> "$GITHUB_PATH"
+          echo "xxd shim installed"
+      - id: first
+        uses: .
+      - id: second
+        uses: .
+      - name: Assert values are valid and distinct
+        env:
+          A: ${{ steps.first.outputs.random }}
+          B: ${{ steps.second.outputs.random }}
+        run: |
+          echo "first: $A"
+          echo "second: $B"
+          for v in "$A" "$B"; do
+            if ! echo "$v" | grep -qE '^[0-9a-f]{32}$'; then
+              echo "FAIL: expected 32 lowercase hex characters, got '$v'"
+              exit 1
+            fi
+          done
+          if [ "$A" = "$B" ]; then
+            echo "FAIL: two random values are identical"
+            exit 1
+          fi
+          echo "PASS"

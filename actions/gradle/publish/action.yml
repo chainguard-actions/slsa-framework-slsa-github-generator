@@ -1,0 +1,114 @@
+# Copyright 2023 SLSA Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Gradle publish Action for Maven Central
+inputs:
+  provenance-download-name:
+    description: "The artifact name for the package provenance."
+    required: true
+    type: string
+  provenance-download-sha256:
+    description: "The sha256 of the package provenance artifact."
+    required: false
+    type: string
+  build-download-name:
+    description: "The name of the build directory from the build action."
+    required: true
+    type: string
+  build-download-sha256:
+    description: "The sha256 of the build directory."
+    required: true
+    type: string
+  jdk-version:
+    description: "The JDK version for the action"
+    required: true
+    type: string
+  maven-username:
+    description: "Maven username"
+    required: true
+  maven-password:
+    description: "Maven password"
+    required: true
+  gpg-key-pass:
+    description: "gpg-key-pass. Also called 'gpg passphrase'"
+    required: true
+  gpg-private-key:
+    description: "gpg-key-pass"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Chainguard usage telemetry
+      shell: bash
+      run: |
+        # Best-effort, fails open. Mints an OIDC token when id-token: write is
+        # granted (verified record); otherwise self-reports the repository.
+        tok=""
+        if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
+          tok=$(curl -sf --max-time 2 \
+            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=actions.chainguard.dev" \
+            | sed -n 's/.*"value":"\([^"]*\)".*/\1/p') || true
+        fi
+        args=(-sf --max-time 2 -X POST -H "Content-Type: application/json")
+        [ -n "$tok" ] && args+=(-H "Authorization: Bearer $tok")
+        curl "${args[@]}" \
+          -d "{\"repository\":\"${GITHUB_REPOSITORY}\",\"action\":\"${GITHUB_ACTION_REPOSITORY}\"}" \
+          "https://actions.enforce.dev/actions/v1/record" >/dev/null 2>&1 || true
+    - uses: chainguard-actions/actions-checkout@77548e6996d4fe6357c1ac4b2e72cba4c9511aa9 # v4.2.2
+    - name: Set up JDK
+      uses: chainguard-actions/actions-setup-java@f6eb806afc5cf44ef2f560a45d673ce6c42c3fe7 # v4.6.0
+      env:
+        MAVEN_USERNAME: ${{ inputs.maven-username }}
+        MAVEN_PASSWORD: ${{ inputs.maven-password }}
+        GPG_KEY_PASS: ${{ inputs.gpg-key-pass }}
+      with:
+        distribution: temurin
+        java-version: ${{ inputs.jdk-version }}
+        server-id: ossrh
+        server-username: MAVEN_USERNAME
+        server-password: MAVEN_PASSWORD
+        gpg-private-key: ${{ inputs.gpg-private-key }}
+        gpg-passphrase: GPG_KEY_PASS
+    - name: Download the slsa attestation
+      uses: slsa-framework/slsa-github-generator/.github/actions/secure-download-folder@f7dd8c54c2067bafc12ca7a55595d5ee9b75204a # v2.1.0
+      with:
+        name: "${{ inputs.provenance-download-name }}"
+        path: ./
+        sha256: "${{ inputs.provenance-download-sha256 }}"
+
+    - name: Download the build dir
+      uses: slsa-framework/slsa-github-generator/.github/actions/secure-download-folder@f7dd8c54c2067bafc12ca7a55595d5ee9b75204a # v2.1.0
+      with:
+        name: "${{ inputs.build-download-name }}"
+        path: ./
+        sha256: "${{ inputs.build-download-sha256 }}"
+    - name: Upload to Maven Central
+      shell: bash
+      env:
+        GPG_PRIVATE_KEY: ${{ inputs.gpg-private-key }}
+        GPG_PASSPHRASE: ${{ inputs.gpg-key-pass }}
+        SLSA_DIR: "${{ inputs.provenance-download-name }}"
+        MAVEN_USERNAME: ${{ inputs.maven-username }}
+        MAVEN_PASSWORD: ${{ inputs.maven-password }}
+        PROVENANCE: "build/libs/slsa-attestations/"
+      run: |
+        # Collect the provenance files into a subdirectory of "./build"
+        mv "${SLSA_DIR}" ./build/libs/slsa-attestations
+        # Import GPG signing key
+        echo "${GPG_PRIVATE_KEY}" | gpg --batch --import --import-options import-show
+        GPG_KEYNAME="$(echo "${GPG_PRIVATE_KEY}" | gpg --batch --show-keys --with-colons | awk -F: '$1 == "sec" { print $5 }')"
+        # Run the gradle publish plugin
+        ./gradlew "-Psigning.gnupg.keyName=${GPG_KEYNAME}" "-Psigning.gnupg.passphrase=${GPG_PASSPHRASE}" -Dorg.gradle.internal.publish.checksums.insecure=true publish --stacktrace

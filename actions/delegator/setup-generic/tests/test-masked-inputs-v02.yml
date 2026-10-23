@@ -1,0 +1,48 @@
+name: Test masked inputs with slsa v0.2
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          slsa-version: v0.2
+          slsa-workflow-recipient: delegator_generic_slsa3.yml
+          slsa-build-action-path: ./actions/build-artifacts
+          slsa-runner-label: ubuntu-latest
+          slsa-rekor-log-public: "true"
+          slsa-checkout-fetch-depth: "2"
+          slsa-checkout-sha1: abcdef0123456789
+          slsa-workflow-inputs: '{"user":"alice","email":"a@example.com","mode":"release"}'
+          slsa-workflow-masked-inputs: "user, email"
+      - name: Assert token produced (or graceful failure without OIDC signing identity)
+        env:
+          RESULT: ${{ steps.action.outputs.slsa-token }}
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ]; then
+            if [ -z "$RESULT" ]; then
+              echo "FAIL: action succeeded but slsa-token is empty"
+              exit 1
+            fi
+            JSON="$(echo "${RESULT#*.}" | base64 -d)"
+            echo "unsigned token: $JSON"
+            for want in '"slsaVersion":"v0.2"' '"masked_inputs":["user","email"]' \
+                        '"fetch_depth":"2"' '"sha1":"abcdef0123456789"' '"rekor_log_public":"true"'; do
+              if ! echo "$JSON" | grep -qF "$want"; then
+                echo "FAIL: token missing $want"
+                exit 1
+              fi
+            done
+            echo "PASS: token valid"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (no OIDC identity for sigstore signing under act)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

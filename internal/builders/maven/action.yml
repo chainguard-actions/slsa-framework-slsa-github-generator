@@ -1,0 +1,140 @@
+# Copyright 2023 SLSA Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Maven builder
+inputs:
+  # BYOB-provided inputs
+  slsa-workflow-inputs:
+    # Inputs in JSON format.
+    description: "All the onputs"
+    type: string
+    required: true
+  slsa-layout-file:
+    description: "Location to store the layout content"
+    type: string
+    required: true
+  slsa-workflow-secret1: {}
+  slsa-workflow-secret2: {}
+  slsa-workflow-secret3: {}
+  slsa-workflow-secret4: {}
+  slsa-workflow-secret5: {}
+  slsa-workflow-secret6: {}
+  slsa-workflow-secret7: {}
+  slsa-workflow-secret8: {}
+  slsa-workflow-secret9: {}
+  slsa-workflow-secret10: {}
+  slsa-workflow-secret11: {}
+  slsa-workflow-secret12: {}
+  slsa-workflow-secret13: {}
+  slsa-workflow-secret14: {}
+  slsa-workflow-secret15: {}
+outputs:
+  target-download-sha256:
+    description: >
+      The sha256 digest of the "target" directory.
+
+      Users should verify the download against this digest to prevent tampering.
+    value: ${{ steps.upload-target.outputs.sha256 }}
+
+  target-download-name:
+    description: "Name of the artifact to download the target directory."
+    value: "${{ steps.rng.outputs.random }}-target"
+
+on:
+  workflow_call:
+runs:
+  using: "composite"
+  steps:
+    - name: Chainguard usage telemetry
+      shell: bash
+      run: |
+        # Best-effort, fails open. Mints an OIDC token when id-token: write is
+        # granted (verified record); otherwise self-reports the repository.
+        tok=""
+        if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
+          tok=$(curl -sf --max-time 2 \
+            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=actions.chainguard.dev" \
+            | sed -n 's/.*"value":"\([^"]*\)".*/\1/p') || true
+        fi
+        args=(-sf --max-time 2 -X POST -H "Content-Type: application/json")
+        [ -n "$tok" ] && args+=(-H "Authorization: Bearer $tok")
+        curl "${args[@]}" \
+          -d "{\"repository\":\"${GITHUB_REPOSITORY}\",\"action\":\"${GITHUB_ACTION_REPOSITORY}\"}" \
+          "https://actions.enforce.dev/actions/v1/record" >/dev/null 2>&1 || true
+    - uses: actions/checkout@85e6279cec87321a52edac9c87bce653a07cf6c2 # v 3.5.2
+    - name: Set up JDK
+      uses: chainguard-actions/actions-setup-java@f6eb806afc5cf44ef2f560a45d673ce6c42c3fe7 # v4.6.0
+      with:
+        distribution: temurin
+        java-version: ${{ fromJson(inputs.slsa-workflow-inputs).jdk-version }}
+    - name: Checkout the tool repository
+      uses: slsa-framework/slsa-github-generator/.github/actions/secure-builder-checkout@f7dd8c54c2067bafc12ca7a55595d5ee9b75204a # v2.1.0
+      with:
+        repository: slsa-framework/slsa-github-generator
+        ref: v2.1.0
+        path: __BUILDER_CHECKOUT_DIR__
+    - name: Run mvn package
+      shell: bash
+      env:
+        SLSA_OUTPUTS_ARTIFACTS_FILE: ${{ inputs.slsa-layout-file }}
+        UNTRUSTED_PROJECT_ROOT: ${{ fromJson(inputs.slsa-workflow-inputs).directory }}
+      run: |
+        # Ensure no directory traversal.
+        # NOTE: the actions/download-artifact Action only creates files
+        # in the workspace directory, but this may change in the future.
+        # TODO(#1893): Consolidate directory traversal checks
+        validate_path() {
+          untrusted_path=$1
+          resolved_dir=$(readlink -m "$untrusted_path")
+          wd=$(readlink -m "${GITHUB_WORKSPACE}")
+          if [[ "${resolved_dir}" != "${wd}"/* ]] && [[ "${resolved_dir}" != "${wd}" ]]; then
+            if [[ "${RUNNER_TEMP}" != "" ]] && [[ "${resolved_dir}" != "${RUNNER_TEMP}"/* ]] && [[ "${resolved_dir}" != "${RUNNER_TEMP}" ]]; then
+              if [[ "${resolved_dir}" != /tmp/* ]] && [[ "${resolved_dir}" != "/tmp" ]]; then
+                echo "Path is not in the workspace or temp directory: $untrusted_path"
+                exit 1
+              fi
+            fi
+          fi
+        }
+
+        validate_path "${UNTRUSTED_PROJECT_ROOT}"
+
+        # remove trailing "/"'s with `realpath`
+        project_root=$(realpath "${UNTRUSTED_PROJECT_ROOT}")
+
+        mv ./__BUILDER_CHECKOUT_DIR__ ../__BUILDER_CHECKOUT_DIR__ \
+          && cd ../__BUILDER_CHECKOUT_DIR__/actions/maven/publish/slsa-hashing-plugin \
+          && mvn clean install \
+          && cd - \
+          && cd "${project_root}" \
+          && mvn package  -Drun.hash.jarfile=true
+        # NOTE: SLSA_OUTPUTS_ARTIFACTS_FILE is a relative path and the project_root may
+        # not be in GITHUB_WORKSPACE, so we need to move the file.
+        # The following checks if the directories are different before executing the command, fixing an error when SLSA is generated from the root of a repository.
+        [[ "$(dirname "${SLSA_OUTPUTS_ARTIFACTS_FILE}")" -ef "${GITHUB_WORKSPACE}/../" ]] || mv "$(dirname "${SLSA_OUTPUTS_ARTIFACTS_FILE}")" "${GITHUB_WORKSPACE}/../"
+        mv target "${GITHUB_WORKSPACE}/"
+
+    # rng generates a random number to avoid name collision in artifacts
+    # when multiple workflows run concurrently.
+    - name: Generate random 16-byte value (32-char hex encoded)
+      id: rng
+      uses: slsa-framework/slsa-github-generator/.github/actions/rng@f7dd8c54c2067bafc12ca7a55595d5ee9b75204a # v2.1.0
+
+    - name: Upload target
+      id: upload-target
+      uses: slsa-framework/slsa-github-generator/.github/actions/secure-upload-folder@f7dd8c54c2067bafc12ca7a55595d5ee9b75204a # v2.1.0
+      with:
+        name: "${{ steps.rng.outputs.random }}-target"
+        path: target

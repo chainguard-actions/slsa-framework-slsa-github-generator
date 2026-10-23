@@ -1,0 +1,30 @@
+name: Test invalid sha256 fails
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          provenance-download-name: provenance
+          provenance-download-sha256: "not-a-sha"
+          target-download-name: target
+          target-download-sha256: "also-not-a-sha"
+          maven-username: test-user
+          maven-password: test-password
+          gpg-key-pass: test-pass
+          gpg-private-key: not-a-real-key
+      - name: Assert action failed
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "FAIL: expected failure with invalid sha256 inputs, got '$OUTCOME'"
+            exit 1
+          fi
+          echo "PASS: action failed as expected"

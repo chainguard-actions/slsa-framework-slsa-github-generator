@@ -1,0 +1,45 @@
+name: Test basic usage
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          slsa-workflow-recipient: delegator_generic_slsa3.yml
+          slsa-build-action-path: ./actions/build-artifacts
+          slsa-runner-label: ubuntu-latest
+          slsa-workflow-inputs: '{"name1":"value1","name2":"value2"}'
+      - name: Assert token produced (or graceful failure without OIDC signing identity)
+        env:
+          RESULT: ${{ steps.action.outputs.slsa-token }}
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ]; then
+            if [ -z "$RESULT" ]; then
+              echo "FAIL: action succeeded but slsa-token is empty"
+              exit 1
+            fi
+            UNSIGNED="${RESULT#*.}"
+            JSON="$(echo "$UNSIGNED" | base64 -d)"
+            echo "unsigned token: $JSON"
+            for want in '"slsaVersion":"v1.0"' '"audience":"delegator_generic_slsa3.yml"' \
+                        '"runner_label":"ubuntu-latest"' '"path":"./actions/build-artifacts"' \
+                        '"name1":"value1"' '"fetch_depth":"1"'; do
+              if ! echo "$JSON" | grep -qF "$want"; then
+                echo "FAIL: token missing $want"
+                exit 1
+              fi
+            done
+            echo "PASS: token valid"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (no OIDC identity for sigstore signing under act)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

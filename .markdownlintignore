@@ -1,0 +1,9 @@
+# Ignore the .git directory
+.git
+
+# Dependency directories (remove the comment below to include it)
+vendor/
+node_modules/
+
+# Vendored third_party code.
+third_party/

@@ -1,0 +1,28 @@
+name: Test basic folder upload
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create folder to upload
+        run: |
+          mkdir -p upload-folder-basic/sub
+          echo "hello" > upload-folder-basic/a.txt
+          echo "world" > upload-folder-basic/sub/b.txt
+      - id: action
+        uses: .
+        with:
+          name: ${{ github.run_id }}-${{ github.run_attempt }}-basic-artifact
+          path: upload-folder-basic
+      - name: Assert sha256 output is a valid digest
+        env:
+          ACTUAL: ${{ steps.action.outputs.sha256 }}
+        run: |
+          echo "actual: $ACTUAL"
+          if ! echo "$ACTUAL" | grep -qE '^[a-f0-9]{64}$'; then
+            echo "FAIL: expected 64-char hex sha256"
+            exit 1
+          fi
+          echo "PASS"

@@ -1,0 +1,87 @@
+name: Test basic usage
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Provide xxd shim if missing (act image lacks xxd)
+        run: |
+          if command -v xxd >/dev/null 2>&1; then
+            echo "xxd already available"
+            exit 0
+          fi
+          mkdir -p /tmp/fakebin
+          cat > /tmp/fakebin/xxd <<'EOF'
+          #!/usr/bin/env bash
+          # Minimal xxd shim supporting plain hex dump (-p/-ps/-plain), -l LEN, -c COLS, optional input file.
+          len=""
+          cols=30
+          file=""
+          while [ $# -gt 0 ]; do
+            case "$1" in
+              -p|-ps|-postscript|-plain) ;;
+              -l|-len) len="$2"; shift ;;
+              -l*) len="${1#-l}" ;;
+              -c|-cols) cols="$2"; shift ;;
+              -c*) cols="${1#-c}" ;;
+              -*) ;;
+              *) file="$1" ;;
+            esac
+            shift
+          done
+          if [ -n "$file" ]; then exec 0<"$file"; fi
+          if [ -n "$len" ]; then
+            data=$(head -c "$len" | od -An -v -tx1 | tr -d ' \n')
+          else
+            data=$(od -An -v -tx1 | tr -d ' \n')
+          fi
+          [ "$cols" -le 0 ] 2>/dev/null && cols=30
+          w=$((cols * 2))
+          i=0
+          while [ $i -lt ${#data} ]; do
+            echo "${data:$i:$w}"
+            i=$((i + w))
+          done
+          EOF
+          chmod +x /tmp/fakebin/xxd
+          echo "/tmp/fakebin" >> "$GITHUB_PATH"
+          head -c 16 /dev/urandom | /tmp/fakebin/xxd -p
+      - name: Create subjects file
+        run: |
+          echo "$(echo -n 'abc123  artifact.bin' | base64 -w0)" > subjects.txt
+          sha256sum subjects.txt | awk '{print $1}' > /tmp/expected_sha
+          cat /tmp/expected_sha
+      - id: action
+        uses: .
+        with:
+          path: subjects.txt
+      - name: Assert handle decodes to correct object
+        env:
+          HANDLE: ${{ steps.action.outputs.handle }}
+        run: |
+          echo "handle: $HANDLE"
+          if [ -z "$HANDLE" ]; then
+            echo "FAIL: handle is empty"
+            exit 1
+          fi
+          OBJ="$(echo "$HANDLE" | base64 -d)"
+          echo "object: $OBJ"
+          FILENAME="$(echo "$OBJ" | jq -r .filename)"
+          NAME="$(echo "$OBJ" | jq -r .artifact_name)"
+          SHA="$(echo "$OBJ" | jq -r .sha256)"
+          EXPECTED_SHA="$(cat /tmp/expected_sha)"
+          if [ "$FILENAME" != "subjects.txt" ]; then
+            echo "FAIL: filename '$FILENAME' != 'subjects.txt'"
+            exit 1
+          fi
+          case "$NAME" in
+            subjects.txt-?*) ;;
+            *) echo "FAIL: artifact_name '$NAME' does not match subjects.txt-<random>"; exit 1 ;;
+          esac
+          if [ "$SHA" != "$EXPECTED_SHA" ]; then
+            echo "FAIL: sha256 '$SHA' != '$EXPECTED_SHA'"
+            exit 1
+          fi
+          echo "PASS"
