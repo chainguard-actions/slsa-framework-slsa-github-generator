@@ -80,7 +80,7 @@ runs:
         sha256: ${{ inputs.package-download-sha256 }}
 
     - name: Download provenance
-      uses: slsa-framework/slsa-github-generator/actions/nodejs/secure-attestations-download@f7dd8c54c2067bafc12ca7a55595d5ee9b75204a # v2.1.0
+      uses: chainguard-actions/slsa-framework-slsa-github-generator/actions/nodejs/secure-attestations-download@6c42d69ff963aed4d66fd6ecb375d22fd445212e # v2.1.0
       with:
         name: ${{ inputs.provenance-download-name }}
         path: "${{ steps.temp-dir.outputs.path }}"
