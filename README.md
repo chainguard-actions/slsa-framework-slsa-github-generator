@@ -9,6 +9,7 @@ Hardened by [Chainguard](https://www.chainguard.dev) from the upstream action at
 | Version | Tag | Upstream commit |
 |---------|-----|-----------------|
 | actions/delegator/secure-download-folder/v2.1.0 | [`actions/delegator/secure-download-folder/v2.1.0`](https://github.com/chainguard-actions/slsa-framework-slsa-github-generator/tree/actions/delegator/secure-download-folder/v2.1.0) | — |
+| v2.1.0 | [`v2.1.0`](https://github.com/chainguard-actions/slsa-framework-slsa-github-generator/tree/v2.1.0) | [`f7dd8c5`](https://github.com/slsa-framework/slsa-github-generator/commit/f7dd8c54c2067bafc12ca7a55595d5ee9b75204a) |
 
 ## Privacy
 
