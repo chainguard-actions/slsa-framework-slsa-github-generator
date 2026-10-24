@@ -82,7 +82,7 @@ runs:
     # checkout ourselves.
 
     - name: Setup Node
-      uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
+      uses: chainguard-actions/actions-setup-node@251ee5999939cdeeb1437c01181c3a897dbfee13 # v4.2.0
       with:
         node-version: ${{ fromJson(inputs.slsa-workflow-inputs).node-version }}
         node-version-file: ${{ fromJson(inputs.slsa-workflow-inputs).node-version-file }}
